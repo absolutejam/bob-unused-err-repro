@@ -1,0 +1,41 @@
+plugins_preset: "all" # Valid values are "default", "all" or "none".
+sql:
+  dialect: sqlite
+  pattern: "migrations.sql"
+
+plugins:
+  dbinfo:
+    disabled: false
+    destination: "./gen/bob/dbinfo"
+    pkgname: "dbinfo"
+  enums:
+    disabled: false
+    destination: "./gen/bob/enums"
+    pkgname: "enums"
+  models:
+    disabled: false
+    destination: "./gen/bob/models"
+    pkgname: "models"
+  factory:
+    disabled: false
+    destination: "./gen/bob/factory"
+    pkgname: "factory"
+  dberrors:
+    disabled: false
+    destination: "./gen/bob/dberrors"
+    pkgname: "dberrors"
+  where:
+    disabled: false
+  loaders:
+    disabled: false
+  joins:
+    disabled: false
+
+relationships:
+  locations:
+    - name: "locations_primary_version"
+      sides:
+        - from: "locations"
+          to: "location_versions"
+          columns: [id, location_id]
+          modify: "from"
