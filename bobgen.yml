@@ -17,9 +17,7 @@ plugins:
     destination: "./gen/bob/models"
     pkgname: "models"
   factory:
-    disabled: false
-    destination: "./gen/bob/factory"
-    pkgname: "factory"
+    disabled: true
   dberrors:
     disabled: false
     destination: "./gen/bob/dberrors"
@@ -31,11 +29,22 @@ plugins:
   joins:
     disabled: false
 
+aliases:
+  location_versions:
+    relationships:
+      locations_primary_version: "PrimaryVersion"
+
 relationships:
   locations:
     - name: "locations_primary_version"
+      never_required: true
       sides:
         - from: "locations"
           to: "location_versions"
-          columns: [id, location_id]
+          columns:
+            - [id, location_id]
           modify: "from"
+          to_where:
+            - column: "is_primary_version"
+              sql_value: "`true`"
+              go_value: "true"

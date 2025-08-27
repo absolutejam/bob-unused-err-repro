@@ -56,16 +56,11 @@ type LocationVersionTemplate struct {
 }
 
 type locationVersionR struct {
-	Location  *locationVersionRLocationR
-	Locations []*locationVersionRLocationsR
+	Location *locationVersionRLocationR
 }
 
 type locationVersionRLocationR struct {
 	o *LocationTemplate
-}
-type locationVersionRLocationsR struct {
-	number int
-	o      *LocationTemplate
 }
 
 // Apply mods to the LocationVersionTemplate
@@ -83,18 +78,6 @@ func (t LocationVersionTemplate) setModelRels(o *models.LocationVersion) {
 		rel.R.LocationVersions = append(rel.R.LocationVersions, o)
 		o.LocationID = rel.ID // h2
 		o.R.Location = rel
-	}
-
-	if t.r.Locations != nil {
-		rel := models.LocationSlice{}
-		for _, r := range t.r.Locations {
-			related := r.o.BuildMany(r.number)
-			for _, rel := range related {
-				rel.R.LocationVersion = o
-			}
-			rel = append(rel, related...)
-		}
-		o.R.Locations = rel
 	}
 }
 
@@ -249,26 +232,6 @@ func ensureCreatableLocationVersion(m *models.LocationVersionSetter) {
 // any required relationship should have already exist on the model
 func (o *LocationVersionTemplate) insertOptRels(ctx context.Context, exec bob.Executor, m *models.LocationVersion) error {
 	var err error
-
-	isLocationsDone, _ := locationVersionRelLocationsCtx.Value(ctx)
-	if !isLocationsDone && o.r.Locations != nil {
-		ctx = locationVersionRelLocationsCtx.WithValue(ctx, true)
-		for _, r := range o.r.Locations {
-			if r.o.alreadyPersisted {
-				m.R.Locations = append(m.R.Locations, r.o.Build())
-			} else {
-				rel1, err := r.o.CreateMany(ctx, exec, r.number)
-				if err != nil {
-					return err
-				}
-
-				err = m.AttachLocations(ctx, exec, rel1...)
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
 
 	return err
 }
@@ -865,53 +828,5 @@ func (m locationVersionMods) WithExistingLocation(em *models.Location) LocationV
 func (m locationVersionMods) WithoutLocation() LocationVersionMod {
 	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
 		o.r.Location = nil
-	})
-}
-
-func (m locationVersionMods) WithLocations(number int, related *LocationTemplate) LocationVersionMod {
-	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
-		o.r.Locations = []*locationVersionRLocationsR{{
-			number: number,
-			o:      related,
-		}}
-	})
-}
-
-func (m locationVersionMods) WithNewLocations(number int, mods ...LocationMod) LocationVersionMod {
-	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
-		related := o.f.NewLocationWithContext(ctx, mods...)
-		m.WithLocations(number, related).Apply(ctx, o)
-	})
-}
-
-func (m locationVersionMods) AddLocations(number int, related *LocationTemplate) LocationVersionMod {
-	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
-		o.r.Locations = append(o.r.Locations, &locationVersionRLocationsR{
-			number: number,
-			o:      related,
-		})
-	})
-}
-
-func (m locationVersionMods) AddNewLocations(number int, mods ...LocationMod) LocationVersionMod {
-	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
-		related := o.f.NewLocationWithContext(ctx, mods...)
-		m.AddLocations(number, related).Apply(ctx, o)
-	})
-}
-
-func (m locationVersionMods) AddExistingLocations(existingModels ...*models.Location) LocationVersionMod {
-	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
-		for _, em := range existingModels {
-			o.r.Locations = append(o.r.Locations, &locationVersionRLocationsR{
-				o: o.f.FromExistingLocation(em),
-			})
-		}
-	})
-}
-
-func (m locationVersionMods) WithoutLocations() LocationVersionMod {
-	return LocationVersionModFunc(func(ctx context.Context, o *LocationVersionTemplate) {
-		o.r.Locations = nil
 	})
 }

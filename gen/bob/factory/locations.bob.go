@@ -52,15 +52,11 @@ type LocationTemplate struct {
 
 type locationR struct {
 	LocationVersions []*locationRLocationVersionsR
-	LocationVersion  *locationRLocationVersionR
 }
 
 type locationRLocationVersionsR struct {
 	number int
 	o      *LocationVersionTemplate
-}
-type locationRLocationVersionR struct {
-	o *LocationVersionTemplate
 }
 
 // Apply mods to the LocationTemplate
@@ -84,13 +80,6 @@ func (t LocationTemplate) setModelRels(o *models.Location) {
 			rel = append(rel, related...)
 		}
 		o.R.LocationVersions = rel
-	}
-
-	if t.r.LocationVersion != nil {
-		rel := t.r.LocationVersion.o.Build()
-		rel.R.Locations = append(rel.R.Locations, o)
-
-		o.R.LocationVersion = rel
 	}
 }
 
@@ -221,25 +210,6 @@ func (o *LocationTemplate) insertOptRels(ctx context.Context, exec bob.Executor,
 				}
 			}
 		}
-	}
-
-	isLocationVersionDone, _ := locationRelLocationVersionCtx.Value(ctx)
-	if !isLocationVersionDone && o.r.LocationVersion != nil {
-		ctx = locationRelLocationVersionCtx.WithValue(ctx, true)
-		if o.r.LocationVersion.o.alreadyPersisted {
-			m.R.LocationVersion = o.r.LocationVersion.o.Build()
-		} else {
-			var rel1 *models.LocationVersion
-			rel1, err = o.r.LocationVersion.o.Create(ctx, exec)
-			if err != nil {
-				return err
-			}
-			err = m.AttachLocationVersion(ctx, exec, rel1)
-			if err != nil {
-				return err
-			}
-		}
-
 	}
 
 	return err
@@ -579,41 +549,6 @@ func (m locationMods) WithParentsCascading() LocationMod {
 			return
 		}
 		ctx = locationWithParentsCascadingCtx.WithValue(ctx, true)
-		{
-
-			related := o.f.NewLocationVersionWithContext(ctx, LocationVersionMods.WithParentsCascading())
-			m.WithLocationVersion(related).Apply(ctx, o)
-		}
-	})
-}
-
-func (m locationMods) WithLocationVersion(rel *LocationVersionTemplate) LocationMod {
-	return LocationModFunc(func(ctx context.Context, o *LocationTemplate) {
-		o.r.LocationVersion = &locationRLocationVersionR{
-			o: rel,
-		}
-	})
-}
-
-func (m locationMods) WithNewLocationVersion(mods ...LocationVersionMod) LocationMod {
-	return LocationModFunc(func(ctx context.Context, o *LocationTemplate) {
-		related := o.f.NewLocationVersionWithContext(ctx, mods...)
-
-		m.WithLocationVersion(related).Apply(ctx, o)
-	})
-}
-
-func (m locationMods) WithExistingLocationVersion(em *models.LocationVersion) LocationMod {
-	return LocationModFunc(func(ctx context.Context, o *LocationTemplate) {
-		o.r.LocationVersion = &locationRLocationVersionR{
-			o: o.f.FromExistingLocationVersion(em),
-		}
-	})
-}
-
-func (m locationMods) WithoutLocationVersion() LocationMod {
-	return LocationModFunc(func(ctx context.Context, o *LocationTemplate) {
-		o.r.LocationVersion = nil
 	})
 }
 

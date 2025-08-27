@@ -52,8 +52,8 @@ type LocationVersionsQuery = *sqlite.ViewQuery[*LocationVersion, LocationVersion
 
 // locationVersionR is where relationships are stored.
 type locationVersionR struct {
-	Location  *Location     // fk_location_versions_0
-	Locations LocationSlice // locations_primary_version
+	Location       *Location // fk_location_versions_0
+	PrimaryVersion *Location // locations_primary_version
 }
 
 func buildLocationVersionColumns(alias string) locationVersionColumns {
@@ -587,13 +587,25 @@ func (os LocationVersionSlice) Location(mods ...bob.Mod[*dialect.SelectQuery]) L
 	)...)
 }
 
-// Locations starts a query for related objects on locations
-func (o *LocationVersion) Locations(mods ...bob.Mod[*dialect.SelectQuery]) LocationsQuery {
-	return Locations.Query(append(mods)...)
+// PrimaryVersion starts a query for related objects on locations
+func (o *LocationVersion) PrimaryVersion(mods ...bob.Mod[*dialect.SelectQuery]) LocationsQuery {
+	return Locations.Query(append(mods,
+		sm.Where(Locations.Columns.ID.EQ(sqlite.Arg(o.LocationID))),
+		sm.Where(LocationVersions.Columns.IsPrimaryVersion.EQ(sqlite.Arg("`true`"))),
+	)...)
 }
 
-func (os LocationVersionSlice) Locations(mods ...bob.Mod[*dialect.SelectQuery]) LocationsQuery {
-	return Locations.Query(append(mods)...)
+func (os LocationVersionSlice) PrimaryVersion(mods ...bob.Mod[*dialect.SelectQuery]) LocationsQuery {
+	PKArgSlice := make([]bob.Expression, len(os))
+	for i, o := range os {
+		PKArgSlice[i] = sqlite.ArgGroup(o.LocationID)
+	}
+	PKArgExpr := sqlite.Group(PKArgSlice...)
+
+	return Locations.Query(append(mods,
+		sm.Where(sqlite.Group(Locations.Columns.ID).OP("IN", PKArgExpr)),
+		sm.Where(LocationVersions.Columns.IsPrimaryVersion.EQ(sqlite.Arg("`true`"))),
+	)...)
 }
 
 func attachLocationVersionLocation0(ctx context.Context, exec bob.Executor, count int, locationVersion0 *LocationVersion, location1 *Location) (*LocationVersion, error) {
@@ -642,40 +654,77 @@ func (locationVersion0 *LocationVersion) AttachLocation(ctx context.Context, exe
 	return nil
 }
 
-func (locationVersion0 *LocationVersion) InsertLocations(ctx context.Context, exec bob.Executor, related ...*LocationSetter) error {
-	if len(related) == 0 {
-		return nil
+func attachLocationVersionPrimaryVersion0(ctx context.Context, exec bob.Executor, count int, locationVersion0 *LocationVersion) (*LocationVersion, error) {
+	setter := &LocationVersionSetter{
+		IsPrimaryVersion: &true,
 	}
 
-	var err error
-
-	inserted, err := Locations.Insert(bob.ToMods(related...)).All(ctx, exec)
+	err := locationVersion0.Update(ctx, exec, setter)
 	if err != nil {
-		return fmt.Errorf("inserting related objects: %w", err)
+		return nil, fmt.Errorf("attachLocationVersionPrimaryVersion0: %w", err)
 	}
-	locations1 := LocationSlice(inserted)
 
-	locationVersion0.R.Locations = append(locationVersion0.R.Locations, locations1...)
+	return locationVersion0, nil
+}
 
-	for _, rel := range locations1 {
-		rel.R.LocationVersion = locationVersion0
+func insertLocationVersionPrimaryVersion1(ctx context.Context, exec bob.Executor, location1 *LocationSetter, locationVersion0 *LocationVersion) (*Location, error) {
+	location1.ID = omit.From(locationVersion0.LocationID)
+
+	ret, err := Locations.Insert(location1).One(ctx, exec)
+	if err != nil {
+		return ret, fmt.Errorf("insertLocationVersionPrimaryVersion1: %w", err)
 	}
+
+	return ret, nil
+}
+
+func attachLocationVersionPrimaryVersion1(ctx context.Context, exec bob.Executor, count int, location1 *Location, locationVersion0 *LocationVersion) (*Location, error) {
+	setter := &LocationSetter{
+		ID: omit.From(locationVersion0.LocationID),
+	}
+
+	err := location1.Update(ctx, exec, setter)
+	if err != nil {
+		return nil, fmt.Errorf("attachLocationVersionPrimaryVersion1: %w", err)
+	}
+
+	return location1, nil
+}
+
+func (locationVersion0 *LocationVersion) InsertPrimaryVersion(ctx context.Context, exec bob.Executor, related *LocationSetter) error {
+	locationVersion0, err = attachLocationVersionPrimaryVersion0(ctx, exec, 1, locationVersion0)
+	if err != nil {
+		return err
+	}
+
+	location1, err := insertLocationVersionPrimaryVersion1(ctx, exec, related, locationVersion0)
+	if err != nil {
+		return err
+	}
+
+	locationVersion0.R.PrimaryVersion = location1
+
+	location1.R.LocationVersion = locationVersion0
+
 	return nil
 }
 
-func (locationVersion0 *LocationVersion) AttachLocations(ctx context.Context, exec bob.Executor, related ...*Location) error {
-	if len(related) == 0 {
-		return nil
-	}
-
+func (locationVersion0 *LocationVersion) AttachPrimaryVersion(ctx context.Context, exec bob.Executor, location1 *Location) error {
 	var err error
-	locations1 := LocationSlice(related)
 
-	locationVersion0.R.Locations = append(locationVersion0.R.Locations, locations1...)
-
-	for _, rel := range related {
-		rel.R.LocationVersion = locationVersion0
+	locationVersion0, err = attachLocationVersionPrimaryVersion0(ctx, exec, 1, locationVersion0)
+	if err != nil {
+		return err
 	}
+
+	_, err = attachLocationVersionPrimaryVersion1(ctx, exec, 1, location1, locationVersion0)
+	if err != nil {
+		return err
+	}
+
+	locationVersion0.R.PrimaryVersion = location1
+
+	location1.R.LocationVersion = locationVersion0
 
 	return nil
 }
@@ -732,18 +781,16 @@ func (o *LocationVersion) Preload(name string, retrieved any) error {
 			rel.R.LocationVersions = LocationVersionSlice{o}
 		}
 		return nil
-	case "Locations":
-		rels, ok := retrieved.(LocationSlice)
+	case "PrimaryVersion":
+		rel, ok := retrieved.(*Location)
 		if !ok {
 			return fmt.Errorf("locationVersion cannot load %T as %q", retrieved, name)
 		}
 
-		o.R.Locations = rels
+		o.R.PrimaryVersion = rel
 
-		for _, rel := range rels {
-			if rel != nil {
-				rel.R.LocationVersion = o
-			}
+		if rel != nil {
+			rel.R.LocationVersion = o
 		}
 		return nil
 	default:
@@ -752,7 +799,8 @@ func (o *LocationVersion) Preload(name string, retrieved any) error {
 }
 
 type locationVersionPreloader struct {
-	Location func(...sqlite.PreloadOption) sqlite.Preloader
+	Location       func(...sqlite.PreloadOption) sqlite.Preloader
+	PrimaryVersion func(...sqlite.PreloadOption) sqlite.Preloader
 }
 
 func buildLocationVersionPreloader() locationVersionPreloader {
@@ -770,20 +818,40 @@ func buildLocationVersionPreloader() locationVersionPreloader {
 				},
 			}, Locations.Columns.Names(), opts...)
 		},
+		PrimaryVersion: func(opts ...sqlite.PreloadOption) sqlite.Preloader {
+			return sqlite.Preload[*Location, LocationSlice](sqlite.PreloadRel{
+				Name: "PrimaryVersion",
+				Sides: []sqlite.PreloadSide{
+					{
+						From:        LocationVersions,
+						To:          Locations,
+						FromColumns: []string{"location_id"},
+						ToColumns:   []string{"id"},
+						FromWhere: []orm.RelWhere{
+							{
+								Column:   ColumnNames.LocationVersions.IsPrimaryVersion,
+								SQLValue: "`true`",
+								GoValue:  "true",
+							},
+						},
+					},
+				},
+			}, Locations.Columns.Names(), opts...)
+		},
 	}
 }
 
 type locationVersionThenLoader[Q orm.Loadable] struct {
-	Location  func(...bob.Mod[*dialect.SelectQuery]) orm.Loader[Q]
-	Locations func(...bob.Mod[*dialect.SelectQuery]) orm.Loader[Q]
+	Location       func(...bob.Mod[*dialect.SelectQuery]) orm.Loader[Q]
+	PrimaryVersion func(...bob.Mod[*dialect.SelectQuery]) orm.Loader[Q]
 }
 
 func buildLocationVersionThenLoader[Q orm.Loadable]() locationVersionThenLoader[Q] {
 	type LocationLoadInterface interface {
 		LoadLocation(context.Context, bob.Executor, ...bob.Mod[*dialect.SelectQuery]) error
 	}
-	type LocationsLoadInterface interface {
-		LoadLocations(context.Context, bob.Executor, ...bob.Mod[*dialect.SelectQuery]) error
+	type PrimaryVersionLoadInterface interface {
+		LoadPrimaryVersion(context.Context, bob.Executor, ...bob.Mod[*dialect.SelectQuery]) error
 	}
 
 	return locationVersionThenLoader[Q]{
@@ -793,10 +861,10 @@ func buildLocationVersionThenLoader[Q orm.Loadable]() locationVersionThenLoader[
 				return retrieved.LoadLocation(ctx, exec, mods...)
 			},
 		),
-		Locations: thenLoadBuilder[Q](
-			"Locations",
-			func(ctx context.Context, exec bob.Executor, retrieved LocationsLoadInterface, mods ...bob.Mod[*dialect.SelectQuery]) error {
-				return retrieved.LoadLocations(ctx, exec, mods...)
+		PrimaryVersion: thenLoadBuilder[Q](
+			"PrimaryVersion",
+			func(ctx context.Context, exec bob.Executor, retrieved PrimaryVersionLoadInterface, mods ...bob.Mod[*dialect.SelectQuery]) error {
+				return retrieved.LoadPrimaryVersion(ctx, exec, mods...)
 			},
 		),
 	}
@@ -854,45 +922,35 @@ func (os LocationVersionSlice) LoadLocation(ctx context.Context, exec bob.Execut
 	return nil
 }
 
-// LoadLocations loads the locationVersion's Locations into the .R struct
-func (o *LocationVersion) LoadLocations(ctx context.Context, exec bob.Executor, mods ...bob.Mod[*dialect.SelectQuery]) error {
+// LoadPrimaryVersion loads the locationVersion's PrimaryVersion into the .R struct
+func (o *LocationVersion) LoadPrimaryVersion(ctx context.Context, exec bob.Executor, mods ...bob.Mod[*dialect.SelectQuery]) error {
 	if o == nil {
 		return nil
 	}
 
 	// Reset the relationship
-	o.R.Locations = nil
+	o.R.PrimaryVersion = nil
 
-	related, err := o.Locations(mods...).All(ctx, exec)
+	related, err := o.PrimaryVersion(mods...).One(ctx, exec)
 	if err != nil {
 		return err
 	}
 
-	for _, rel := range related {
-		rel.R.LocationVersion = o
-	}
+	related.R.LocationVersion = o
 
-	o.R.Locations = related
+	o.R.PrimaryVersion = related
 	return nil
 }
 
-// LoadLocations loads the locationVersion's Locations into the .R struct
-func (os LocationVersionSlice) LoadLocations(ctx context.Context, exec bob.Executor, mods ...bob.Mod[*dialect.SelectQuery]) error {
+// LoadPrimaryVersion loads the locationVersion's PrimaryVersion into the .R struct
+func (os LocationVersionSlice) LoadPrimaryVersion(ctx context.Context, exec bob.Executor, mods ...bob.Mod[*dialect.SelectQuery]) error {
 	if len(os) == 0 {
 		return nil
 	}
 
-	locations, err := os.Locations(mods...).All(ctx, exec)
+	locations, err := os.PrimaryVersion(mods...).All(ctx, exec)
 	if err != nil {
 		return err
-	}
-
-	for _, o := range os {
-		if o == nil {
-			continue
-		}
-
-		o.R.Locations = nil
 	}
 
 	for _, o := range os {
@@ -902,9 +960,14 @@ func (os LocationVersionSlice) LoadLocations(ctx context.Context, exec bob.Execu
 
 		for _, rel := range locations {
 
+			if !(o.LocationID == rel.ID) {
+				continue
+			}
+
 			rel.R.LocationVersion = o
 
-			o.R.Locations = append(o.R.Locations, rel)
+			o.R.PrimaryVersion = rel
+			break
 		}
 	}
 
@@ -912,9 +975,9 @@ func (os LocationVersionSlice) LoadLocations(ctx context.Context, exec bob.Execu
 }
 
 type locationVersionJoins[Q dialect.Joinable] struct {
-	typ       string
-	Location  modAs[Q, locationColumns]
-	Locations modAs[Q, locationColumns]
+	typ            string
+	Location       modAs[Q, locationColumns]
+	PrimaryVersion modAs[Q, locationColumns]
 }
 
 func (j locationVersionJoins[Q]) aliasedAs(alias string) locationVersionJoins[Q] {
@@ -938,13 +1001,16 @@ func buildLocationVersionJoins[Q dialect.Joinable](cols locationVersionColumns, 
 				return mods
 			},
 		},
-		Locations: modAs[Q, locationColumns]{
+		PrimaryVersion: modAs[Q, locationColumns]{
 			c: Locations.Columns,
 			f: func(to locationColumns) bob.Mod[Q] {
 				mods := make(mods.QueryMods[Q], 0, 1)
 
 				{
-					mods = append(mods, dialect.Join[Q](typ, Locations.Name().As(to.Alias())).On())
+					mods = append(mods, dialect.Join[Q](typ, Locations.Name().As(to.Alias())).On(
+						to.ID.EQ(cols.LocationID),
+						cols.IsPrimaryVersion.EQ(sqlite.Arg("`true`")),
+					))
 				}
 
 				return mods

@@ -484,11 +484,23 @@ func (os LocationSlice) LocationVersions(mods ...bob.Mod[*dialect.SelectQuery]) 
 
 // LocationVersion starts a query for related objects on location_versions
 func (o *Location) LocationVersion(mods ...bob.Mod[*dialect.SelectQuery]) LocationVersionsQuery {
-	return LocationVersions.Query(append(mods)...)
+	return LocationVersions.Query(append(mods,
+		sm.Where(LocationVersions.Columns.LocationID.EQ(sqlite.Arg(o.ID))),
+		sm.Where(LocationVersions.Columns.IsPrimaryVersion.EQ(sqlite.Arg("`true`"))),
+	)...)
 }
 
 func (os LocationSlice) LocationVersion(mods ...bob.Mod[*dialect.SelectQuery]) LocationVersionsQuery {
-	return LocationVersions.Query(append(mods)...)
+	PKArgSlice := make([]bob.Expression, len(os))
+	for i, o := range os {
+		PKArgSlice[i] = sqlite.ArgGroup(o.ID)
+	}
+	PKArgExpr := sqlite.Group(PKArgSlice...)
+
+	return LocationVersions.Query(append(mods,
+		sm.Where(sqlite.Group(LocationVersions.Columns.LocationID).OP("IN", PKArgExpr)),
+		sm.Where(LocationVersions.Columns.IsPrimaryVersion.EQ(sqlite.Arg("`true`"))),
+	)...)
 }
 
 func insertLocationLocationVersions0(ctx context.Context, exec bob.Executor, locationVersions1 []*LocationVersionSetter, location0 *Location) (LocationVersionSlice, error) {
@@ -559,15 +571,57 @@ func (location0 *Location) AttachLocationVersions(ctx context.Context, exec bob.
 	return nil
 }
 
-func (location0 *Location) InsertLocationVersion(ctx context.Context, exec bob.Executor, related *LocationVersionSetter) error {
-	locationVersion1, err := LocationVersions.Insert(related).One(ctx, exec)
+func attachLocationLocationVersion0(ctx context.Context, exec bob.Executor, count int, location0 *Location, locationVersion1 *LocationVersion) (*Location, error) {
+	setter := &LocationSetter{
+		ID: omit.From(locationVersion1.LocationID),
+	}
+
+	err := location0.Update(ctx, exec, setter)
 	if err != nil {
-		return fmt.Errorf("inserting related objects: %w", err)
+		return nil, fmt.Errorf("attachLocationLocationVersion0: %w", err)
+	}
+
+	return location0, nil
+}
+
+func insertLocationLocationVersion1(ctx context.Context, exec bob.Executor, locationVersion1 *LocationVersionSetter) (*LocationVersion, error) {
+	locationVersion1.IsPrimaryVersion = &true
+
+	ret, err := LocationVersions.Insert(locationVersion1).One(ctx, exec)
+	if err != nil {
+		return ret, fmt.Errorf("insertLocationLocationVersion1: %w", err)
+	}
+
+	return ret, nil
+}
+
+func attachLocationLocationVersion1(ctx context.Context, exec bob.Executor, count int, locationVersion1 *LocationVersion) (*LocationVersion, error) {
+	setter := &LocationVersionSetter{
+		IsPrimaryVersion: &true,
+	}
+
+	err := locationVersion1.Update(ctx, exec, setter)
+	if err != nil {
+		return nil, fmt.Errorf("attachLocationLocationVersion1: %w", err)
+	}
+
+	return locationVersion1, nil
+}
+
+func (location0 *Location) InsertLocationVersion(ctx context.Context, exec bob.Executor, related *LocationVersionSetter) error {
+	location0, err = attachLocationLocationVersion0(ctx, exec, 1, location0, locationVersion1)
+	if err != nil {
+		return err
+	}
+
+	locationVersion1, err := insertLocationLocationVersion1(ctx, exec, related)
+	if err != nil {
+		return err
 	}
 
 	location0.R.LocationVersion = locationVersion1
 
-	locationVersion1.R.Locations = append(locationVersion1.R.Locations, location0)
+	locationVersion1.R.PrimaryVersion = location0
 
 	return nil
 }
@@ -575,9 +629,19 @@ func (location0 *Location) InsertLocationVersion(ctx context.Context, exec bob.E
 func (location0 *Location) AttachLocationVersion(ctx context.Context, exec bob.Executor, locationVersion1 *LocationVersion) error {
 	var err error
 
+	location0, err = attachLocationLocationVersion0(ctx, exec, 1, location0, locationVersion1)
+	if err != nil {
+		return err
+	}
+
+	_, err = attachLocationLocationVersion1(ctx, exec, 1, locationVersion1)
+	if err != nil {
+		return err
+	}
+
 	location0.R.LocationVersion = locationVersion1
 
-	locationVersion1.R.Locations = append(locationVersion1.R.Locations, location0)
+	locationVersion1.R.PrimaryVersion = location0
 
 	return nil
 }
@@ -635,7 +699,7 @@ func (o *Location) Preload(name string, retrieved any) error {
 		o.R.LocationVersion = rel
 
 		if rel != nil {
-			rel.R.Locations = LocationSlice{o}
+			rel.R.PrimaryVersion = o
 		}
 		return nil
 	default:
@@ -654,8 +718,17 @@ func buildLocationPreloader() locationPreloader {
 				Name: "LocationVersion",
 				Sides: []sqlite.PreloadSide{
 					{
-						From: Locations,
-						To:   LocationVersions,
+						From:        Locations,
+						To:          LocationVersions,
+						FromColumns: []string{"id"},
+						ToColumns:   []string{"location_id"},
+						ToWhere: []orm.RelWhere{
+							{
+								Column:   ColumnNames.LocationVersions.IsPrimaryVersion,
+								SQLValue: "`true`",
+								GoValue:  "true",
+							},
+						},
 					},
 				},
 			}, LocationVersions.Columns.Names(), opts...)
@@ -767,7 +840,7 @@ func (o *Location) LoadLocationVersion(ctx context.Context, exec bob.Executor, m
 		return err
 	}
 
-	related.R.Locations = LocationSlice{o}
+	related.R.PrimaryVersion = o
 
 	o.R.LocationVersion = related
 	return nil
@@ -791,7 +864,11 @@ func (os LocationSlice) LoadLocationVersion(ctx context.Context, exec bob.Execut
 
 		for _, rel := range locationVersions {
 
-			rel.R.Locations = append(rel.R.Locations, o)
+			if !(o.ID == rel.LocationID) {
+				continue
+			}
+
+			rel.R.PrimaryVersion = o
 
 			o.R.LocationVersion = rel
 			break
@@ -834,7 +911,10 @@ func buildLocationJoins[Q dialect.Joinable](cols locationColumns, typ string) lo
 				mods := make(mods.QueryMods[Q], 0, 1)
 
 				{
-					mods = append(mods, dialect.Join[Q](typ, LocationVersions.Name().As(to.Alias())).On())
+					mods = append(mods, dialect.Join[Q](typ, LocationVersions.Name().As(to.Alias())).On(
+						to.LocationID.EQ(cols.ID),
+						to.IsPrimaryVersion.EQ(sqlite.Arg("`true`")),
+					))
 				}
 
 				return mods

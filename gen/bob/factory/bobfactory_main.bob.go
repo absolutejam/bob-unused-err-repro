@@ -55,9 +55,6 @@ func (f *Factory) FromExistingLocationVersion(m *models.LocationVersion) *Locati
 	if m.R.Location != nil {
 		LocationVersionMods.WithExistingLocation(m.R.Location).Apply(ctx, o)
 	}
-	if len(m.R.Locations) > 0 {
-		LocationVersionMods.AddExistingLocations(m.R.Locations...).Apply(ctx, o)
-	}
 
 	return o
 }
@@ -91,9 +88,6 @@ func (f *Factory) FromExistingLocation(m *models.Location) *LocationTemplate {
 	ctx := context.Background()
 	if len(m.R.LocationVersions) > 0 {
 		LocationMods.AddExistingLocationVersions(m.R.LocationVersions...).Apply(ctx, o)
-	}
-	if m.R.LocationVersion != nil {
-		LocationMods.WithExistingLocationVersion(m.R.LocationVersion).Apply(ctx, o)
 	}
 
 	return o

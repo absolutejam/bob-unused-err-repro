@@ -11,12 +11,10 @@ var (
 	// Relationship Contexts for location_versions
 	locationVersionWithParentsCascadingCtx = newContextual[bool]("locationVersionWithParentsCascading")
 	locationVersionRelLocationCtx          = newContextual[bool]("location_versions.locations.fk_location_versions_0")
-	locationVersionRelLocationsCtx         = newContextual[bool]("location_versions.locations.locations_primary_version")
 
 	// Relationship Contexts for locations
 	locationWithParentsCascadingCtx = newContextual[bool]("locationWithParentsCascading")
 	locationRelLocationVersionsCtx  = newContextual[bool]("location_versions.locations.fk_location_versions_0")
-	locationRelLocationVersionCtx   = newContextual[bool]("location_versions.locations.locations_primary_version")
 )
 
 // Contextual is a convienience wrapper around context.WithValue and context.Value
